@@ -60,14 +60,18 @@ type Coordinator struct {
 	workerStatus workerStruct
 }
 
-type status int
+// type status int
 
-const (
-	WAITING status = iota
-	RUNNING
-	RETRYING
-	FINISHED
-)
+// const ( // 分队列了，不需要了
+// 	WAITING status = iota
+// 	RUNNING
+// 	RETRYING
+// 	FINISHED
+// )
+
+// 退出标记
+var quitting bool = false
+var canquit bool = false
 
 const MediateFileDir string = "/tmp/mrmediate"
 
@@ -95,6 +99,7 @@ func genToken() (string, error) {
 
 func getMapTask(c *Coordinator) *maptask {
 	var t *maptask
+	// 先从retrying取，再从waiting取，最后从running取
 	if len(c.mapTasks.retrying) != 0 {
 		t = c.mapTasks.retrying[0]
 		t.retryCnt++
@@ -115,6 +120,7 @@ func getMapTask(c *Coordinator) *maptask {
 
 func getReduceTask(c *Coordinator) *reducetask {
 	var t *reducetask
+	// 先从retrying取，再从waiting取，最后从running取
 	if len(c.reduceTasks.retrying) != 0 {
 		t = c.reduceTasks.retrying[0]
 		t.retryCnt++
@@ -181,7 +187,7 @@ func mcountdown(c *Coordinator, id string) {
 					c.mapTasks.retrying = append(c.mapTasks.retrying, targ)
 				} else {
 					c.mapTasks.failed = append(c.mapTasks.failed, targ)
-					fmt.Print("maptask for %v failed after 10 retries", targ.filepath)
+					fmt.Print("maptask for %v failed after 10 retries\n", targ.filepath)
 				}
 
 			}
@@ -223,7 +229,7 @@ func rcountdown(c *Coordinator, id string) {
 					c.reduceTasks.retrying = append(c.reduceTasks.retrying, targ)
 				} else {
 					c.reduceTasks.failed = append(c.reduceTasks.failed, targ)
-					fmt.Print("reduce for hashid %v failed after 10 retries", targ.taskid)
+					fmt.Print("reduce for hashid %v failed after 10 retries\n", targ.taskid)
 				}
 			}
 		}
@@ -239,12 +245,20 @@ func (c *Coordinator) GetTask(args *GetTaskArgs, reply *GetTaskReply) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	
 	clientid := args.Token
+
+	if c.reduceTasks.taskCnt == 0 {
+		reply.IsQuit = true
+		delete(c.workers.workers, )
+		return nil
+	}
+
 	_, ok := c.workerStatus.workers[clientid]
 	if !ok {
 		newToken, err := genToken()
 		if err != nil {
-			fmt.Print("gen token failed %v", err)
+			fmt.Print("gen token failed %v\n", err)
 			return nil
 		}
 		reply.Token = newToken
@@ -272,7 +286,8 @@ func (c *Coordinator) GetTask(args *GetTaskArgs, reply *GetTaskReply) error {
 		go mcountdown(c, clientid)
 	} else if c.reduceTasks.taskCnt != 0 {
 		reply.Type = REDUCETASK
-		reply.Dstdir = FinalFileDir
+		// reply.Dstdir = FinalFileDir
+		reply.Dstdir = MediateFileDir // 先也存到中间文件夹，report done中拷贝到最终文件夹
 		var rt *reducetask
 		rt = getReduceTask(c)
 		if rt == nil {
@@ -359,11 +374,26 @@ func (c *Coordinator) server() {
 // main/mrcoordinator.go calls Done() periodically to find out
 // if the entire job has finished.
 func (c *Coordinator) Done() bool {
-	ret := false
+	// ret := false
 
 	// Your code here.
+	if c.reduceTasks.taskCnt != 0 {
+		return false
+	}
 
-	return ret
+	if !quitting {
+		go func() {
+			fmt.Print("preparing to quit, waiting for workers to end %v\n", time.Now())
+			quitting = true
+			t := timer.NewTimer(2 * TIMEOUT)
+			<- t.C
+			fmt.Print("quit at %v\n", time.Now())
+			canquit = true
+		}()
+	}
+	return canquit
+
+	// return ret
 }
 
 // create a Coordinator.
@@ -381,17 +411,17 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 			return nil
 		}
 	} else if !os.IsNotExist(err) {
-		fmt.Print("check dir error: %v", err)
+		fmt.Print("check dir error: %v\n", err)
 		return nil
 	}
 	err = os.Mkdir(MediateFileDir, 0755)
 	if err != nil {
-		fmt.Print("create dir error: %v", err)
+		fmt.Print("create dir error: %v\n", err)
 	}
 
 	// initialize map reduce tasks
 	exePath, err := os.Executable()
-	FinalFileDir = exePath
+	// FinalFileDir = exePath
 	exeDir := filepath.Dir(exePath)
 	for _, f := range files {
 		c.mapTasks.taskCnt++
