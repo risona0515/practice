@@ -1,41 +1,229 @@
 package mr
 
-import "fmt"
-import "log"
-import "net/rpc"
-import "hash/fnv"
+import (
+	"encoding/json"
+	"fmt"
+	"hash/fnv"
+	"io"
+	"log"
+	_ "net/http/pprof"
+	"net/rpc"
+	"os"
+	"path/filepath"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
+)
 
-
-//
 // Map functions return a slice of KeyValue.
-//
 type KeyValue struct {
 	Key   string
 	Value string
 }
 
-//
+type ByKey []KeyValue
+
+// for sorting by key.
+func (a ByKey) Len() int           { return len(a) }
+func (a ByKey) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
+func (a ByKey) Less(i, j int) bool { return a[i].Key < a[j].Key }
+
 // use ihash(key) % NReduce to choose the reduce
 // task number for each KeyValue emitted by Map.
-//
 func ihash(key string) int {
 	h := fnv.New32a()
 	h.Write([]byte(key))
 	return int(h.Sum32() & 0x7fffffff)
 }
 
-
-//
 // main/mrworker.go calls this function.
-//
 func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
-
-	// Your worker implementation here.
-
 	// uncomment to send the Example RPC to the coordinator.
 	// CallExample()
 
+	var id string
+
+	for true {
+		request := GetTaskArgs{Token: id}
+		reply := GetTaskReply{Token: id, IsQuit: false}
+		getJob(&request, &reply)
+		if reply.IsQuit {
+			break
+		}
+		if id != reply.Token {
+			id = reply.Token
+		}
+		tasktype := reply.Type
+		if tasktype == TASKBEGIN {
+			time.Sleep(1 * time.Second)
+			continue
+		}
+
+		// 检查目录是否存在，不存在则创建
+		dstdir := reply.Dstdir
+		os.MkdirAll(dstdir, os.ModePerm)
+
+		var midfile []string
+		if tasktype == MAPTASK {
+			midfile = make([]string, reply.NReduce)
+			retok := procMapWork(&reply, mapf, &midfile, reply.NReduce)
+			if !retok {
+				reply.Token = "" // 失败场景暂时用无token来表示
+			}
+		} else if tasktype == REDUCETASK {
+			midfile = make([]string, 1) // reduce只需要填一个文件
+			retok := procReduceWork(&reply, reducef, &midfile)
+			if !retok {
+				reply.Token = ""
+			}
+		}
+		reportargs := ReportTaskArgs{Type: tasktype, Token: id, Outfile: midfile}
+		reportDone(&reportargs, &reply.Reduceid)
+	}
+}
+
+// 返回值，成功 true，失败 false
+func procMapWork(reply *GetTaskReply, mapf func(string, string) []KeyValue, outfile *[]string, arraysize int) bool {
+	dstdir := reply.Dstdir
+	fpath := reply.Filepath
+
+	// 调用map函数做统计
+	intermediate := make([][]KeyValue, arraysize)
+	f, err := os.Open(fpath)
+	if err != nil {
+		log.Println("cannot open", fpath)
+		log.Println(err)
+	}
+	content, err := io.ReadAll(f)
+	if err != nil {
+		log.Println("cannot read", fpath)
+		log.Println(err)
+	}
+	f.Close()
+	kva := mapf(fpath, string(content))
+	for _, kvpair := range kva {
+		rid := ihash(kvpair.Key) % arraysize
+		intermediate[rid] = append(intermediate[rid], kvpair)
+	}
+	// intermediate = append(intermediate, kva...)
+
+	// 拼接写入的中间文件路径
+	fname := filepath.Base(fpath)
+	ext := filepath.Ext(fname)
+	fnameNoExt := strings.TrimSuffix(fname, ext)
+	// 根据哈希%n创建文件
+	for idx := 0; idx < arraysize; idx++ {
+		outpath := filepath.Join(dstdir, fnameNoExt+"_"+strconv.Itoa(idx)+".json")
+		f, err = os.Create(outpath)
+		if err != nil { // 这里检查过了，前面是否可以不用检查目录是否创建？
+			log.Printf("map worker %v create midfile failed, src %v, dst %v", reply.Token, fpath, outpath)
+			log.Println(err)
+			return false
+		}
+		// 写入map
+		encoder := json.NewEncoder(f)
+		encoder.Encode(intermediate[idx])
+		f.Close()
+		(*outfile)[idx] = outpath
+	}
+
+	// 创建写入的中间文件路径
+	// outpath := filepath.Join(dstdir, fnameNoExt+".json")
+	// f, err = os.Create(outpath)
+	// if err != nil { // 这里检查过了，前面是否可以不用检查目录是否创建？
+	// 	log.Printf("map worker %v create midfile failed, src %v, dst %v", reply.Token, fpath, outpath)
+	// 	log.Println(err)
+	// 	return false
+	// }
+	// defer f.Close()
+	// *outfile = outpath
+
+	return true
+}
+
+// 返回值，成功 true，失败 false
+func procReduceWork(reply *GetTaskReply, reducef func(string, []string) string, outfile *[]string) bool {
+	dstdir := reply.Dstdir
+	files := reply.MediateFiles
+	reduceid := reply.Reduceid
+	nreduce := reply.NReduce
+
+	// 先创建输出文件
+	oname := fmt.Sprintf("mr-out-%d", reduceid)
+	outpath := filepath.Join(dstdir, oname)
+	ofile, err := os.Create(outpath)
+	if err != nil {
+		log.Printf("reduce worker %v create midfile failed, nreduce id %v, dst %v", reply.Token, nreduce, outpath)
+		log.Println(err)
+		return false
+	}
+	defer ofile.Close()
+	(*outfile)[0] = outpath
+
+	gather := map[string][]string{}
+
+	for _, midfile := range files {
+		f, err := os.Open(midfile)
+		if err != nil {
+			log.Println(err)
+			return false
+		}
+		intermediate := []KeyValue{}
+		decoder := json.NewDecoder(f)
+		err = decoder.Decode(&intermediate)
+		if err != nil {
+			log.Println(err)
+			f.Close()
+			return false
+		}
+		f.Close()
+
+		sort.Sort(ByKey(intermediate))
+
+		i := 0 // 可以直接在for后面定义吗
+		for i < len(intermediate) {
+			j := i + 1
+			for j < len(intermediate) && intermediate[j].Key == intermediate[i].Key {
+				j++
+			}
+			for k := i; k < j; k++ {
+				gather[intermediate[i].Key] = append(gather[intermediate[i].Key], intermediate[k].Value)
+			}
+			i = j
+		}
+	}
+	for k, v := range gather {
+		output := reducef(k, v)
+		fmt.Fprintf(ofile, "%v %v\n", k, output)
+	}
+	return true
+}
+
+func getJob(args *GetTaskArgs, reply *GetTaskReply) {
+	// send the RPC request, wait for the reply.
+	// the "Coordinator.Example" tells the
+	// receiving server that we'd like to call
+	// the Example() method of struct Coordinator.
+	ok := call("Coordinator.GetTask", args, reply)
+	if ok {
+		// reply.Y should be 100.
+		// log.Printf("worker %v processing %v %v\n", reply.Token, reply.Filepath, reply.Reduceid)
+	} else {
+		log.Printf("worker %v get work failed!\n", reply.Token)
+	}
+}
+
+func reportDone(args *ReportTaskArgs, reply *int) {
+	// log.Printf("reduceid %d call report done", *reply)
+	ok := call("Coordinator.ReportTaskDone", args, nil)
+	if ok {
+		// reply.Y should be 100.
+		// log.Printf("worker %v report done\n", args.Token)
+	} else {
+		log.Printf("worker %v report done failed!\n", args.Token)
+	}
 }
 
 //
@@ -43,35 +231,33 @@ func Worker(mapf func(string, string) []KeyValue,
 //
 // the RPC argument and reply types are defined in rpc.go.
 //
-func CallExample() {
+// func CallExample() {
 
-	// declare an argument structure.
-	args := ExampleArgs{}
+// 	// declare an argument structure.
+// 	args := ExampleArgs{}
 
-	// fill in the argument(s).
-	args.X = 99
+// 	// fill in the argument(s).
+// 	args.X = 99
 
-	// declare a reply structure.
-	reply := ExampleReply{}
+// 	// declare a reply structure.
+// 	reply := ExampleReply{}
 
-	// send the RPC request, wait for the reply.
-	// the "Coordinator.Example" tells the
-	// receiving server that we'd like to call
-	// the Example() method of struct Coordinator.
-	ok := call("Coordinator.Example", &args, &reply)
-	if ok {
-		// reply.Y should be 100.
-		fmt.Printf("reply.Y %v\n", reply.Y)
-	} else {
-		fmt.Printf("call failed!\n")
-	}
-}
+// 	// send the RPC request, wait for the reply.
+// 	// the "Coordinator.Example" tells the
+// 	// receiving server that we'd like to call
+// 	// the Example() method of struct Coordinator.
+// 	ok := call("Coordinator.Example", &args, &reply)
+// 	if ok {
+// 		// reply.Y should be 100.
+// 		log.Printlnf("reply.Y %v\n", reply.Y)
+// 	} else {
+// 		log.Printlnf("call failed!\n")
+// 	}
+// }
 
-//
 // send an RPC request to the coordinator, wait for the response.
 // usually returns true.
 // returns false if something goes wrong.
-//
 func call(rpcname string, args interface{}, reply interface{}) bool {
 	// c, err := rpc.DialHTTP("tcp", "127.0.0.1"+":1234")
 	sockname := coordinatorSock()
@@ -86,6 +272,6 @@ func call(rpcname string, args interface{}, reply interface{}) bool {
 		return true
 	}
 
-	fmt.Println(err)
+	log.Println(err)
 	return false
 }
