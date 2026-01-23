@@ -53,7 +53,7 @@ type workerStruct struct {
 	// nextWorkerId int
 	// mu sync.Mutex
 	nextDirNo int
-	workers   map[string]worker
+	workers   map[string]*worker
 }
 
 type Coordinator struct {
@@ -279,7 +279,7 @@ func (c *Coordinator) GetTask(args *GetTaskArgs, reply *GetTaskReply) error {
 		reply.Token = newToken
 		clientid = newToken
 		// 更新client结构体
-		var w worker
+		w := worker{}
 		w.id = newToken
 		// 提供文件夹id，让worker自己创建
 		w.dirno = c.workerStatus.nextDirNo
@@ -287,7 +287,7 @@ func (c *Coordinator) GetTask(args *GetTaskArgs, reply *GetTaskReply) error {
 		w.t = time.NewTimer(time.Hour) // 防止立即触发
 		w.t.Stop()
 		w.ch = make(chan int)
-		c.workerStatus.workers[newToken] = w
+		c.workerStatus.workers[newToken] = &w
 	}
 
 	if c.mapTasks.taskCnt != 0 { // 顺序 retry -> waiting -> running
@@ -420,6 +420,9 @@ func (c *Coordinator) Done() bool {
 // nReduce is the number of reduce tasks to use.
 func MakeCoordinator(files []string, nReduce int) *Coordinator {
 	c := Coordinator{}
+	c.mapTasks.mapping = make(map[string]*maptask)
+	c.reduceTasks.mapping = make(map[string]*reducetask)
+	c.workerStatus.workers = make(map[string]*worker)
 
 	// Your code here.
 	// create path
