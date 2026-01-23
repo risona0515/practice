@@ -52,6 +52,7 @@ type GetTaskReply struct {
 	//Reduce
 	MediateFiles []string
 	Reduceid     int
+	NReduce      int
 }
 
 type ReportTaskArgs struct {

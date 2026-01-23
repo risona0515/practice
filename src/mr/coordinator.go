@@ -3,13 +3,13 @@ package mr
 import (
 	"crypto/rand"
 	"encoding/base64"
-	"fmt"
 	"log"
 	"net"
 	"net/http"
 	"net/rpc"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -35,21 +35,25 @@ type reducetask struct {
 }
 type reduceStruct struct {
 	taskCnt                                  int
+	nReduce                                  int
 	mediatefiles                             []string
+	finalfiles                               []string
 	waiting, running, retrying, done, failed []*reducetask
 	mapping                                  map[string]*reducetask
 }
 
 // 记录client的结构体
 type worker struct {
-	id string
-	t  *time.Timer
-	ch chan int // 用于提前停止定时器监控协程
+	id    string
+	dirno int
+	t     *time.Timer
+	ch    chan int // 用于提前停止定时器监控协程
 }
 type workerStruct struct {
 	// nextWorkerId int
 	// mu sync.Mutex
-	workers map[string]worker
+	nextDirNo int
+	workers   map[string]worker
 }
 
 type Coordinator struct {
@@ -74,8 +78,9 @@ var quitting bool = false
 var canquit bool = false
 
 const MediateFileDir string = "/tmp/mrmediate"
+const FinalFileDir string = "/tmp/mrfinal"
 
-var FinalFileDir string
+// var FinalFileDir string
 
 const TIMEOUT = 10 * time.Second
 
@@ -187,7 +192,7 @@ func mcountdown(c *Coordinator, id string) {
 					c.mapTasks.retrying = append(c.mapTasks.retrying, targ)
 				} else {
 					c.mapTasks.failed = append(c.mapTasks.failed, targ)
-					fmt.Print("maptask for %v failed after 10 retries\n", targ.filepath)
+					log.Printf("maptask for %v failed after 10 retries\n", targ.filepath)
 				}
 
 			}
@@ -229,7 +234,7 @@ func rcountdown(c *Coordinator, id string) {
 					c.reduceTasks.retrying = append(c.reduceTasks.retrying, targ)
 				} else {
 					c.reduceTasks.failed = append(c.reduceTasks.failed, targ)
-					fmt.Print("reduce for hashid %v failed after 10 retries\n", targ.taskid)
+					log.Printf("reduce for hashid %v failed after 10 retries\n", targ.taskid)
 				}
 			}
 		}
@@ -245,12 +250,22 @@ func (c *Coordinator) GetTask(args *GetTaskArgs, reply *GetTaskReply) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	
 	clientid := args.Token
 
 	if c.reduceTasks.taskCnt == 0 {
+		// 移动最终文件到当前目录
+		exePath, _ := os.Executable()
+		for _, srcf := range c.reduceTasks.finalfiles {
+			srcfname := filepath.Base(srcf)
+			dstf := filepath.Join(exePath, srcfname)
+			err := os.Rename(srcf, dstf)
+			if err != nil {
+				log.Printf("move file %v to exec dir failed, %v.", srcf, err)
+			}
+		}
+
 		reply.IsQuit = true
-		delete(c.workers.workers, )
+		delete(c.workerStatus.workers, clientid)
 		return nil
 	}
 
@@ -258,7 +273,7 @@ func (c *Coordinator) GetTask(args *GetTaskArgs, reply *GetTaskReply) error {
 	if !ok {
 		newToken, err := genToken()
 		if err != nil {
-			fmt.Print("gen token failed %v\n", err)
+			log.Println("gen token failed ", err)
 			return nil
 		}
 		reply.Token = newToken
@@ -266,6 +281,9 @@ func (c *Coordinator) GetTask(args *GetTaskArgs, reply *GetTaskReply) error {
 		// 更新client结构体
 		var w worker
 		w.id = newToken
+		// 提供文件夹id，让worker自己创建
+		w.dirno = c.workerStatus.nextDirNo
+		c.workerStatus.nextDirNo++
 		w.t = time.NewTimer(time.Hour) // 防止立即触发
 		w.t.Stop()
 		w.ch = make(chan int)
@@ -274,11 +292,11 @@ func (c *Coordinator) GetTask(args *GetTaskArgs, reply *GetTaskReply) error {
 
 	if c.mapTasks.taskCnt != 0 { // 顺序 retry -> waiting -> running
 		reply.Type = MAPTASK
-		reply.Dstdir = MediateFileDir
+		reply.Dstdir = filepath.Join(MediateFileDir, strconv.Itoa(c.workerStatus.workers[clientid].dirno))
 		var mt *maptask
 		mt = getMapTask(c)
 		if mt == nil {
-			fmt.Print("get map task failed, no tasks left but tried to get one")
+			log.Println("get map task failed, no tasks left but tried to get one")
 			return nil
 		}
 		c.mapTasks.mapping[clientid] = mt
@@ -287,16 +305,17 @@ func (c *Coordinator) GetTask(args *GetTaskArgs, reply *GetTaskReply) error {
 	} else if c.reduceTasks.taskCnt != 0 {
 		reply.Type = REDUCETASK
 		// reply.Dstdir = FinalFileDir
-		reply.Dstdir = MediateFileDir // 先也存到中间文件夹，report done中拷贝到最终文件夹
+		reply.Dstdir = filepath.Join(FinalFileDir, strconv.Itoa(c.workerStatus.workers[clientid].dirno)) // 先也存到中间文件夹，report done中拷贝到最终文件夹
 		var rt *reducetask
 		rt = getReduceTask(c)
 		if rt == nil {
-			fmt.Print("get reduce task failed, no tasks left but tried to get one")
+			log.Println("get reduce task failed, no tasks left but tried to get one")
 			return nil
 		}
 		c.reduceTasks.mapping[clientid] = rt
 		reply.MediateFiles = c.reduceTasks.mediatefiles
 		reply.Reduceid = rt.taskid
+		reply.NReduce = c.reduceTasks.nReduce
 		go rcountdown(c, clientid)
 	}
 
@@ -349,8 +368,8 @@ func (c *Coordinator) ReportTaskDone(args *ReportTaskArgs, reply *int) error {
 				c.reduceTasks.done = append(c.reduceTasks.done, targ)
 				// 任务计数-1
 				c.reduceTasks.taskCnt--
-				//reduce好像没啥好填的吧？
-				//
+				// 记录最终文件
+				c.reduceTasks.finalfiles = append(c.reduceTasks.finalfiles, args.Outfile)
 			}
 		}
 	}
@@ -383,11 +402,11 @@ func (c *Coordinator) Done() bool {
 
 	if !quitting {
 		go func() {
-			fmt.Print("preparing to quit, waiting for workers to end %v\n", time.Now())
+			log.Printf("preparing to quit, waiting for workers to end %v\n", time.Now())
 			quitting = true
-			t := timer.NewTimer(2 * TIMEOUT)
-			<- t.C
-			fmt.Print("quit at %v\n", time.Now())
+			t := time.NewTimer(2 * TIMEOUT)
+			<-t.C
+			log.Printf("quit at %v\n", time.Now())
 			canquit = true
 		}()
 	}
@@ -404,19 +423,23 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 
 	// Your code here.
 	// create path
-	_, err := os.Stat(MediateFileDir)
-	if err == nil {
-		err := os.RemoveAll(MediateFileDir)
-		if err != nil {
-			return nil
-		}
-	} else if !os.IsNotExist(err) {
-		fmt.Print("check dir error: %v\n", err)
+	// 中间文件目录，只创建外层目录，每个worker的文件夹worker自己创建
+	err := os.RemoveAll(MediateFileDir)
+	if err != nil {
 		return nil
 	}
-	err = os.Mkdir(MediateFileDir, 0755)
+	err = os.MkdirAll(MediateFileDir, 0766)
 	if err != nil {
-		fmt.Print("create dir error: %v\n", err)
+		log.Println("create dir error ", err)
+	}
+	// 最终文件目录
+	err = os.RemoveAll(FinalFileDir)
+	if err != nil {
+		return nil
+	}
+	err = os.MkdirAll(FinalFileDir, 0766)
+	if err != nil {
+		log.Println("create dir error ", err)
 	}
 
 	// initialize map reduce tasks
@@ -430,6 +453,7 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 	}
 
 	c.reduceTasks.taskCnt = nReduce
+	c.reduceTasks.nReduce = nReduce
 	c.reduceTasks.waiting = make([]*reducetask, nReduce)
 	for i := 0; i < nReduce; i++ {
 		c.reduceTasks.waiting[i] = &reducetask{taskid: i, retryCnt: 0}
