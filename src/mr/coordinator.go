@@ -254,7 +254,8 @@ func (c *Coordinator) GetTask(args *GetTaskArgs, reply *GetTaskReply) error {
 
 	if c.reduceTasks.taskCnt == 0 {
 		// 移动最终文件到当前目录
-		exePath, _ := os.Executable()
+		// exePath, _ := os.Executable()
+		exePath := "/Users/risona/Desktop/DistributedSystem/labs/6.5840/src/main"
 		for _, srcf := range c.reduceTasks.finalfiles {
 			srcfname := filepath.Base(srcf)
 			dstf := filepath.Join(exePath, srcfname)
@@ -446,9 +447,10 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 	}
 
 	// initialize map reduce tasks
-	exePath, err := os.Executable()
+	// exePath, err := os.Executable()
 	// FinalFileDir = exePath
-	exeDir := filepath.Dir(exePath)
+	exeDir := "/Users/risona/Desktop/DistributedSystem/labs/6.5840/src/main"
+	//exeDir := filepath.Dir(exePath)
 	for _, f := range files {
 		c.mapTasks.taskCnt++
 		c.mapTasks.waiting = append(c.mapTasks.waiting,

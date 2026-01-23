@@ -89,10 +89,12 @@ func procMapWork(reply *GetTaskReply, mapf func(string, string) []KeyValue, outf
 	f, err := os.Open(fpath)
 	if err != nil {
 		log.Println("cannot open", fpath)
+		log.Println(err)
 	}
 	content, err := io.ReadAll(f)
 	if err != nil {
 		log.Println("cannot read", fpath)
+		log.Println(err)
 	}
 	f.Close()
 	kva := mapf(fpath, string(content))
@@ -112,6 +114,9 @@ func procMapWork(reply *GetTaskReply, mapf func(string, string) []KeyValue, outf
 	}
 	defer f.Close()
 	*outfile = outpath
+
+	// debug 打印看看
+	// fmt.Println(intermediate)
 
 	// 写入map
 	encoder := json.NewEncoder(f)
