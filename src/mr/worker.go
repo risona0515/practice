@@ -6,10 +6,14 @@ import (
 	"hash/fnv"
 	"io"
 	"log"
+	"net/http"
+	_ "net/http/pprof"
 	"net/rpc"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+	"time"
 )
 
 // Map functions return a slice of KeyValue.
@@ -17,6 +21,13 @@ type KeyValue struct {
 	Key   string
 	Value string
 }
+
+type ByKey []KeyValue
+
+// for sorting by key.
+func (a ByKey) Len() int           { return len(a) }
+func (a ByKey) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
+func (a ByKey) Less(i, j int) bool { return a[i].Key < a[j].Key }
 
 // use ihash(key) % NReduce to choose the reduce
 // task number for each KeyValue emitted by Map.
@@ -30,6 +41,10 @@ func ihash(key string) int {
 func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
 
+	go func() {
+		log.Fatal(http.ListenAndServe("localhost:6061", nil))
+	}()
+	// time.Sleep(20 * time.Second)
 	// Your worker implementation here.
 
 	// uncomment to send the Example RPC to the coordinator.
@@ -74,7 +89,7 @@ func Worker(mapf func(string, string) []KeyValue,
 			}
 		}
 		reportargs := ReportTaskArgs{Type: tasktype, Token: id, Outfile: midfile}
-		reportDone(&reportargs, nil)
+		reportDone(&reportargs, &reply.Reduceid)
 	}
 	log.Printf("worker inner exit %v\n", id)
 }
@@ -125,12 +140,31 @@ func procMapWork(reply *GetTaskReply, mapf func(string, string) []KeyValue, outf
 	return true
 }
 
+var retry2 bool = true
+var retry3 bool = true
+var retry5 bool = true
+
 // 返回值，成功 true，失败 false
 func procReduceWork(reply *GetTaskReply, reducef func(string, []string) string, outfile *string) bool {
 	dstdir := reply.Dstdir
 	files := reply.MediateFiles
 	reduceid := reply.Reduceid
 	nreduce := reply.NReduce
+
+	// log.Printf("proc reduce start, retry2 retry3 retry5", retry2, retry3, retry5, nreduce)
+	if reduceid == 2 && retry2 {
+		time.Sleep(12 * time.Second)
+		retry2 = false
+	}
+	if reduceid == 3 && retry3 {
+		time.Sleep(13 * time.Second)
+		retry3 = false
+	}
+	if reduceid == 5 && retry5 {
+		time.Sleep(15 * time.Second)
+		retry5 = false
+	}
+	log.Printf("reduce id %v continue to work", reduceid)
 
 	// 先创建输出文件
 	oname := fmt.Sprintf("mr-out-%d", reduceid)
@@ -162,6 +196,8 @@ func procReduceWork(reply *GetTaskReply, reducef func(string, []string) string, 
 		}
 		f.Close()
 
+		sort.Sort(ByKey(intermediate))
+
 		i := 0 // 可以直接在for后面定义吗
 		for i < len(intermediate) {
 			j := i + 1
@@ -169,7 +205,7 @@ func procReduceWork(reply *GetTaskReply, reducef func(string, []string) string, 
 				j++
 			}
 			if ihash(intermediate[i].Key)%nreduce == reduceid {
-				for k := i; k < j; j++ {
+				for k := i; k < j; k++ {
 					gather[intermediate[i].Key] = append(gather[intermediate[i].Key], intermediate[k].Value)
 				}
 				// count := reducef(intermediate[i].Key, values)
@@ -183,6 +219,7 @@ func procReduceWork(reply *GetTaskReply, reducef func(string, []string) string, 
 		output := reducef(k, v)
 		fmt.Fprintf(ofile, "%v %v\n", k, output)
 	}
+	log.Printf("reduce id %v work done", reduceid)
 	return true
 }
 
@@ -201,6 +238,7 @@ func getJob(args *GetTaskArgs, reply *GetTaskReply) {
 }
 
 func reportDone(args *ReportTaskArgs, reply *int) {
+	log.Printf("reduceid %d call report done", *reply)
 	ok := call("Coordinator.ReportTaskDone", args, nil)
 	if ok {
 		// reply.Y should be 100.

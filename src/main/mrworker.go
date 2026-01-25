@@ -1,3 +1,8 @@
+/*
+#cgo CFLAGS: -I../mrapps
+#cgo LDFLAGS: -lwc
+*/
+
 package main
 
 //
