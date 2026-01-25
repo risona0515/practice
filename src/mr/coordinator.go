@@ -521,12 +521,13 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 	// initialize map reduce tasks
 	// exePath, err := os.Executable()
 	// FinalFileDir = exePath
-	exeDir := "/Users/risona/Desktop/DistributedSystem/labs/6.5840/src/main"
+	// exeDir := "/Users/risona/Desktop/DistributedSystem/labs/6.5840/src/main"
 	//exeDir := filepath.Dir(exePath)
 	for _, f := range files {
 		c.mapTasks.taskCnt++
 		c.mapTasks.waiting = append(c.mapTasks.waiting,
-			&maptask{filepath: filepath.Join(exeDir, filepath.Base(f))})
+			// &maptask{filepath: filepath.Join(exeDir, filepath.Base(f))})
+			&maptask{filepath: f})
 	}
 
 	c.reduceTasks.taskCnt = nReduce
