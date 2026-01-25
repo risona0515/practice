@@ -6,14 +6,12 @@ import (
 	"hash/fnv"
 	"io"
 	"log"
-	"net/http"
 	_ "net/http/pprof"
 	"net/rpc"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
-	"time"
 )
 
 // Map functions return a slice of KeyValue.
@@ -41,9 +39,9 @@ func ihash(key string) int {
 func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
 
-	go func() {
-		log.Fatal(http.ListenAndServe("localhost:6061", nil))
-	}()
+	// go func() {
+	// 	log.Fatal(http.ListenAndServe("localhost:6061", nil))
+	// }()
 	// time.Sleep(20 * time.Second)
 	// Your worker implementation here.
 
@@ -68,11 +66,11 @@ func Worker(mapf func(string, string) []KeyValue,
 		os.MkdirAll(dstdir, os.ModePerm)
 		// info, err := os.Stat(dstdir)
 		// if err != nil {
-		// 	log.Println(err)
+		// 	// log.Println(err)
 		// 	return false
 		// }
 		// if !info.IsDir() {
-		// 	log.Printf("destination %v not a folder\n", dstdir)
+		// 	// log.Printf("destination %v not a folder\n", dstdir)
 		// }
 
 		tasktype := reply.Type
@@ -91,7 +89,7 @@ func Worker(mapf func(string, string) []KeyValue,
 		reportargs := ReportTaskArgs{Type: tasktype, Token: id, Outfile: midfile}
 		reportDone(&reportargs, &reply.Reduceid)
 	}
-	log.Printf("worker inner exit %v\n", id)
+	// log.Printf("worker inner exit %v\n", id)
 }
 
 // 返回值，成功 true，失败 false
@@ -103,12 +101,12 @@ func procMapWork(reply *GetTaskReply, mapf func(string, string) []KeyValue, outf
 	intermediate := []KeyValue{}
 	f, err := os.Open(fpath)
 	if err != nil {
-		log.Println("cannot open", fpath)
+		// log.Println("cannot open", fpath)
 		log.Println(err)
 	}
 	content, err := io.ReadAll(f)
 	if err != nil {
-		log.Println("cannot read", fpath)
+		// log.Println("cannot read", fpath)
 		log.Println(err)
 	}
 	f.Close()
@@ -140,9 +138,9 @@ func procMapWork(reply *GetTaskReply, mapf func(string, string) []KeyValue, outf
 	return true
 }
 
-var retry2 bool = true
-var retry3 bool = true
-var retry5 bool = true
+// var retry2 bool = true
+// var retry3 bool = true
+// var retry5 bool = true
 
 // 返回值，成功 true，失败 false
 func procReduceWork(reply *GetTaskReply, reducef func(string, []string) string, outfile *string) bool {
@@ -151,20 +149,20 @@ func procReduceWork(reply *GetTaskReply, reducef func(string, []string) string, 
 	reduceid := reply.Reduceid
 	nreduce := reply.NReduce
 
-	// log.Printf("proc reduce start, retry2 retry3 retry5", retry2, retry3, retry5, nreduce)
-	if reduceid == 2 && retry2 {
-		time.Sleep(12 * time.Second)
-		retry2 = false
-	}
-	if reduceid == 3 && retry3 {
-		time.Sleep(13 * time.Second)
-		retry3 = false
-	}
-	if reduceid == 5 && retry5 {
-		time.Sleep(15 * time.Second)
-		retry5 = false
-	}
-	log.Printf("reduce id %v continue to work", reduceid)
+	// // log.Printf("proc reduce start, retry2 retry3 retry5", retry2, retry3, retry5, nreduce)
+	// if reduceid == 2 && retry2 {
+	// 	time.Sleep(12 * time.Second)
+	// 	retry2 = false
+	// }
+	// if reduceid == 3 && retry3 {
+	// 	time.Sleep(13 * time.Second)
+	// 	retry3 = false
+	// }
+	// if reduceid == 5 && retry5 {
+	// 	time.Sleep(15 * time.Second)
+	// 	retry5 = false
+	// }
+	// log.Printf("reduce id %v continue to work", reduceid)
 
 	// 先创建输出文件
 	oname := fmt.Sprintf("mr-out-%d", reduceid)
@@ -219,7 +217,7 @@ func procReduceWork(reply *GetTaskReply, reducef func(string, []string) string, 
 		output := reducef(k, v)
 		fmt.Fprintf(ofile, "%v %v\n", k, output)
 	}
-	log.Printf("reduce id %v work done", reduceid)
+	// log.Printf("reduce id %v work done", reduceid)
 	return true
 }
 
@@ -231,20 +229,20 @@ func getJob(args *GetTaskArgs, reply *GetTaskReply) {
 	ok := call("Coordinator.GetTask", args, reply)
 	if ok {
 		// reply.Y should be 100.
-		log.Printf("worker %v processing %v %v\n", reply.Token, reply.Filepath, reply.Reduceid)
+		// log.Printf("worker %v processing %v %v\n", reply.Token, reply.Filepath, reply.Reduceid)
 	} else {
-		log.Printf("%v get work failed!\n", reply.Token)
+		// log.Printf("%v get work failed!\n", reply.Token)
 	}
 }
 
 func reportDone(args *ReportTaskArgs, reply *int) {
-	log.Printf("reduceid %d call report done", *reply)
+	// log.Printf("reduceid %d call report done", *reply)
 	ok := call("Coordinator.ReportTaskDone", args, nil)
 	if ok {
 		// reply.Y should be 100.
-		log.Printf("worker %v report done\n", args.Token)
+		// log.Printf("worker %v report done\n", args.Token)
 	} else {
-		log.Printf("%v report done failed!\n", args.Token)
+		// log.Printf("%v report done failed!\n", args.Token)
 	}
 }
 
@@ -271,9 +269,9 @@ func reportDone(args *ReportTaskArgs, reply *int) {
 // 	ok := call("Coordinator.Example", &args, &reply)
 // 	if ok {
 // 		// reply.Y should be 100.
-// 		log.Printlnf("reply.Y %v\n", reply.Y)
+// 		// log.Printlnf("reply.Y %v\n", reply.Y)
 // 	} else {
-// 		log.Printlnf("call failed!\n")
+// 		// log.Printlnf("call failed!\n")
 // 	}
 // }
 

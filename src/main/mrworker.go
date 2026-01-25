@@ -33,7 +33,7 @@ func main() {
 	mapf, reducef := loadPlugin(os.Args[1])
 
 	mr.Worker(mapf, reducef)
-	fmt.Print("worker main exit")
+	fmt.Print("worker main exit\n")
 }
 
 // load the application Map and Reduce functions
