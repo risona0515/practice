@@ -305,7 +305,7 @@ func createNewChannel(c *Coordinator, id string) {
 		w.ch = nil
 		cancel <- 0
 	}
-	tmpch := make(chan int)
+	tmpch := make(chan int, 1)
 	w.ch = &tmpch
 
 }
@@ -384,7 +384,7 @@ func (c *Coordinator) GetTask(args *GetTaskArgs, reply *GetTaskReply) error {
 		reply.MediateFiles = c.reduceTasks.mediatefiles
 		reply.Reduceid = rt.taskid
 		reply.NReduce = c.reduceTasks.nReduce
-		createNewChannel(c, clientid)
+		createNewChannel(c, clientid) // 优化：建议放到report done中
 		go rcountdown(c, clientid)
 	}
 
