@@ -39,13 +39,6 @@ func ihash(key string) int {
 // main/mrworker.go calls this function.
 func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
-
-	// go func() {
-	// 	log.Fatal(http.ListenAndServe("localhost:6061", nil))
-	// }()
-	// time.Sleep(20 * time.Second)
-	// Your worker implementation here.
-
 	// uncomment to send the Example RPC to the coordinator.
 	// CallExample()
 
@@ -64,7 +57,6 @@ func Worker(mapf func(string, string) []KeyValue,
 		log.Printf("worker %v get task done", id)
 		tasktype := reply.Type
 		if tasktype == TASKBEGIN {
-			// log.Println("no task, sleep 10 s")
 			time.Sleep(1 * time.Second)
 			continue
 		}
@@ -72,17 +64,8 @@ func Worker(mapf func(string, string) []KeyValue,
 		// 检查目录是否存在，不存在则创建
 		dstdir := reply.Dstdir
 		os.MkdirAll(dstdir, os.ModePerm)
-		// info, err := os.Stat(dstdir)
-		// if err != nil {
-		// 	log.Println(err)
-		// 	return false
-		// }
-		// if !info.IsDir() {
-		// 	log.Printf("destination %v not a folder\n", dstdir)
-		// }
 
 		var midfile string
-		log.Printf("worker %v begin task, type%v, inputpath %v, reduceid %v", id, reply.Type, reply.Filepath, reply.Reduceid)
 		if tasktype == MAPTASK {
 			retok := procMapWork(&reply, mapf, &midfile)
 			if !retok {
@@ -94,11 +77,9 @@ func Worker(mapf func(string, string) []KeyValue,
 				reply.Token = ""
 			}
 		}
-		log.Printf("worker %v end task, type %v, outfile %v", id, tasktype, midfile)
 		reportargs := ReportTaskArgs{Type: tasktype, Token: id, Outfile: midfile}
 		reportDone(&reportargs, &reply.Reduceid)
 	}
-	log.Printf("worker inner exit %v\n", id)
 }
 
 // 返回值，成功 true，失败 false
@@ -138,9 +119,6 @@ func procMapWork(reply *GetTaskReply, mapf func(string, string) []KeyValue, outf
 	defer f.Close()
 	*outfile = outpath
 
-	// debug 打印看看
-	// fmt.Println(intermediate)
-
 	// 写入map
 	encoder := json.NewEncoder(f)
 	encoder.Encode(intermediate)
@@ -148,31 +126,12 @@ func procMapWork(reply *GetTaskReply, mapf func(string, string) []KeyValue, outf
 	return true
 }
 
-// var retry2 bool = true
-// var retry3 bool = true
-// var retry5 bool = true
-
 // 返回值，成功 true，失败 false
 func procReduceWork(reply *GetTaskReply, reducef func(string, []string) string, outfile *string) bool {
 	dstdir := reply.Dstdir
 	files := reply.MediateFiles
 	reduceid := reply.Reduceid
 	nreduce := reply.NReduce
-
-	// log.Printf("proc reduce start, retry2 retry3 retry5", retry2, retry3, retry5, nreduce)
-	// if reduceid == 2 && retry2 {
-	// 	time.Sleep(12 * time.Second)
-	// 	retry2 = false
-	// }
-	// if reduceid == 3 && retry3 {
-	// 	time.Sleep(13 * time.Second)
-	// 	retry3 = false
-	// }
-	// if reduceid == 5 && retry5 {
-	// 	time.Sleep(15 * time.Second)
-	// 	retry5 = false
-	// }
-	log.Printf("reduce id %v continue to work", reduceid)
 
 	// 先创建输出文件
 	oname := fmt.Sprintf("mr-out-%d", reduceid)
@@ -186,7 +145,6 @@ func procReduceWork(reply *GetTaskReply, reducef func(string, []string) string, 
 	defer ofile.Close()
 	*outfile = outpath
 
-	// output := make(map[string]int)
 	gather := map[string][]string{}
 
 	for _, midfile := range files {
@@ -217,9 +175,6 @@ func procReduceWork(reply *GetTaskReply, reducef func(string, []string) string, 
 				for k := i; k < j; k++ {
 					gather[intermediate[i].Key] = append(gather[intermediate[i].Key], intermediate[k].Value)
 				}
-				// count := reducef(intermediate[i].Key, values)
-				// output[intermediate[k].Key] += count
-				//fmt.Fprintf(ofile, "%v %v\n", intermediate[i].Key, output)
 			}
 			i = j
 		}
@@ -228,7 +183,6 @@ func procReduceWork(reply *GetTaskReply, reducef func(string, []string) string, 
 		output := reducef(k, v)
 		fmt.Fprintf(ofile, "%v %v\n", k, output)
 	}
-	log.Printf("reduce id %v work done", reduceid)
 	return true
 }
 
@@ -237,11 +191,10 @@ func getJob(args *GetTaskArgs, reply *GetTaskReply) {
 	// the "Coordinator.Example" tells the
 	// receiving server that we'd like to call
 	// the Example() method of struct Coordinator.
-	log.Printf("worker %v get work", args.Token)
 	ok := call("Coordinator.GetTask", args, reply)
 	if ok {
 		// reply.Y should be 100.
-		log.Printf("worker %v processing %v %v\n", reply.Token, reply.Filepath, reply.Reduceid)
+		// log.Printf("worker %v processing %v %v\n", reply.Token, reply.Filepath, reply.Reduceid)
 	} else {
 		log.Printf("worker %v get work failed!\n", reply.Token)
 	}
@@ -253,7 +206,7 @@ func reportDone(args *ReportTaskArgs, reply *int) {
 	ok := call("Coordinator.ReportTaskDone", args, nil)
 	if ok {
 		// reply.Y should be 100.
-		log.Printf("worker %v report done\n", args.Token)
+		// log.Printf("worker %v report done\n", args.Token)
 	} else {
 		log.Printf("worker %v report done failed!\n", args.Token)
 	}

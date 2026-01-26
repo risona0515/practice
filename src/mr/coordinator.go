@@ -3,7 +3,6 @@ package mr
 import (
 	"crypto/rand"
 	"encoding/base64"
-	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -18,8 +17,7 @@ import (
 
 // Map任务结构体
 type maptask struct {
-	filepath string
-	// taskStatus  status
+	filepath    string
 	outfilename string
 	retryCnt    int
 }
@@ -31,8 +29,7 @@ type mapStruct struct {
 
 // Reduce任务结构体
 type reducetask struct {
-	taskid int
-	// taskStatus status
+	taskid   int
 	retryCnt int
 }
 type reduceStruct struct {
@@ -52,28 +49,16 @@ type worker struct {
 	ch    *chan int // 用于提前停止定时器监控协程
 }
 type workerStruct struct {
-	// nextWorkerId int
-	// mu sync.Mutex
 	nextDirNo int
 	workers   map[string]*worker
 }
 
 type Coordinator struct {
-	// Your definitions here.
 	mu           sync.Mutex
 	mapTasks     mapStruct
 	reduceTasks  reduceStruct
 	workerStatus workerStruct
 }
-
-// type status int
-
-// const ( // 分队列了，不需要了
-// 	WAITING status = iota
-// 	RUNNING
-// 	RETRYING
-// 	FINISHED
-// )
 
 // 退出标记
 var quitting bool = false
@@ -82,20 +67,10 @@ var canquit bool = false
 const MediateFileDir string = "/tmp/mrmediate"
 const FinalFileDir string = "/tmp/mrfinal"
 
-// var FinalFileDir string
-
 const TIMEOUT = 10 * time.Second
 
 // Your code here -- RPC handlers for the worker to call.
 
-// an example RPC handler.
-//
-// the RPC argument and reply types are defined in rpc.go.
-//
-//	func (c *Coordinator) Example(args *ExampleArgs, reply *ExampleReply) error {
-//		reply.Y = args.X + 1
-//		return nil
-//	}
 func genToken() (string, error) {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
@@ -112,23 +87,14 @@ func getMapTask(c *Coordinator) *maptask {
 		t.retryCnt++
 		c.mapTasks.running = append(c.mapTasks.running, t)
 		c.mapTasks.retrying = c.mapTasks.retrying[1:]
-		// log.Println("++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++")
-		log.Printf("get map task from retry list, filename: %v", t.filepath)
-		// log.Println("--------------------------------------------------------------------------------")
 	} else if len(c.mapTasks.waiting) != 0 {
 		t = c.mapTasks.waiting[0]
 		c.mapTasks.running = append(c.mapTasks.running, t)
 		c.mapTasks.waiting = c.mapTasks.waiting[1:]
-		// log.Println("++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++")
-		log.Printf("get map task from waiting list, filename: %v", t.filepath)
-		// log.Println("--------------------------------------------------------------------------------")
 	} else if len(c.mapTasks.running) != 0 {
 		return nil
-		// t = c.mapTasks.running[0]
+		// t = c.mapTasks.running[0] // 本来想的是，在快要结束时，多起几个线程执行还未完成的任务。但测试脚本貌似不希望在没有错误发生时多执行任务
 		// c.mapTasks.running = append(c.mapTasks.running[1:], c.mapTasks.running[0])
-		// log.Println("++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++")
-		// log.Println("get map task from running list, filename: ", t.filepath)
-		// log.Println("--------------------------------------------------------------------------------")
 	} else {
 		return nil
 	}
@@ -143,51 +109,18 @@ func getReduceTask(c *Coordinator) *reducetask {
 		t.retryCnt++
 		c.reduceTasks.running = append(c.reduceTasks.running, t)
 		c.reduceTasks.retrying = c.reduceTasks.retrying[1:]
-		// log.Println("++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++")
-		log.Printf("get map task from retry list, reduceid: %v", t.taskid)
-		// log.Println("--------------------------------------------------------------------------------")
 	} else if len(c.reduceTasks.waiting) != 0 {
 		t = c.reduceTasks.waiting[0]
 		c.reduceTasks.running = append(c.reduceTasks.running, t)
 		c.reduceTasks.waiting = c.reduceTasks.waiting[1:]
-		// log.Println("++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++")
-		log.Printf("get map task from waiting list, reduceid: %v", t.taskid)
-		// log.Println("--------------------------------------------------------------------------------")
 	} else if len(c.reduceTasks.running) != 0 {
 		return nil
 		// t = c.reduceTasks.running[0]
 		// c.reduceTasks.running = append(c.reduceTasks.running[1:], c.reduceTasks.running[0])
-		// log.Println("++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++")
-		// log.Println("get map task from running list, reduceid: ", t.taskid)
-		// log.Println("--------------------------------------------------------------------------------")
 	} else {
 		return nil
 	}
 	return t
-}
-
-func printTasks(c *Coordinator) {
-	// var sb strings.Builder
-	// for _, t := range c.mapTasks.retrying {
-	// 	fmt.Fprintf(&sb, "map retrying: %v, retrycnt %v\n", t.filepath, t.retryCnt)
-	// }
-	// for _, t := range c.mapTasks.waiting {
-	// 	fmt.Fprintf(&sb, "map waiting: %v, retrycnt %v\n", t.filepath, t.retryCnt)
-	// }
-	// for _, t := range c.mapTasks.running {
-	// 	fmt.Fprintf(&sb, "map running: %v, retrycnt %v\n", t.filepath, t.retryCnt)
-	// }
-
-	// for _, t := range c.reduceTasks.retrying {
-	// 	fmt.Fprintf(&sb, "reduce retrying: %v, retrycnt %v\n", t.taskid, t.retryCnt)
-	// }
-	// for _, t := range c.reduceTasks.waiting {
-	// 	fmt.Fprintf(&sb, "reduce retrying: %v, retrycnt %v\n", t.taskid, t.retryCnt)
-	// }
-	// for _, t := range c.reduceTasks.running {
-	// 	fmt.Fprintf(&sb, "reduce retrying: %v, retrycnt %v\n", t.taskid, t.retryCnt)
-	// }
-	// log.Println(sb.String())
 }
 
 // map reduce超时能否统一一下？（包括其他结构体，能否统一一下？有必要统一吗？）
@@ -195,27 +128,7 @@ func mcountdown(c *Coordinator, id string) {
 	w := c.workerStatus.workers[id]
 	t := w.t
 	cancel := *w.ch
-	if t.Stop() {
-		// log.Printf("id %v stop timer\n", id)
-		// cancel <- 0 // 停止上一个任务
-
-		// // 需要清空吗？？
-		// for {
-		// 	select {
-		// 	case <-ch:
-		// 		// 继续读取并丢弃数据
-		// 	default:
-		// 		// 当通道为空时，立即退出循环
-		// 		break
-		// 	}
-		// }
-
-	} // else { // 1.23之后不需要了？
-	// 	select {
-	// 		case <- t.C:
-	// 		default:
-	// 	}
-	// }
+	t.Stop()
 	t.Reset(TIMEOUT)
 
 Outerloop:
@@ -223,9 +136,7 @@ Outerloop:
 		select {
 		case <-t.C:
 			// 超时处理
-			log.Println("mcountdown尝试获取锁...")
 			c.mu.Lock()
-			log.Println("mcountdown成功拿到锁...")
 			// 检查是否还在mapping中，找到任务指针
 			targ, ok := c.mapTasks.mapping[id]
 			if !ok {
@@ -236,20 +147,17 @@ Outerloop:
 			// 检查是否还在running中，是的话重试次数+1移到retry，超过最大重试次数不再重试
 			for idx, ta := range c.mapTasks.running {
 				if ta == targ {
-					log.Printf("map task worker id %v timeout", id)
-					// printTasks(c)
+					log.Printf("map task worker id %v timeout\n", id)
 					l := len(c.mapTasks.running)
 					c.mapTasks.running[idx] = c.mapTasks.running[l-1]
 					c.mapTasks.running = c.mapTasks.running[:l-1]
 					ta.retryCnt++
-					if ta.retryCnt < 100 { // 重试10次，然后不再重试
+					if ta.retryCnt < 100 { // 重试100次，然后不再重试
 						c.mapTasks.retrying = append(c.mapTasks.retrying, targ)
 					} else {
 						c.mapTasks.failed = append(c.mapTasks.failed, targ)
 						log.Printf("maptask for %v failed after 100 retries, moving to fail list\n", targ.filepath)
 					}
-					log.Printf("map remove timeout task finished, task structure:")
-					// printTasks(c)
 
 				}
 			}
@@ -257,14 +165,10 @@ Outerloop:
 			if w.ch != nil {
 				w.ch = nil
 				cancel <- 0
-				// log.Println("mcountdown timeout, clear channel, id: \n", id)
 			}
-			log.Println("mcountdown 解锁...")
 			c.mu.Unlock()
-			log.Println("mcountdown 解锁done...")
 		// 停止channel
 		case <-cancel:
-			// log.Println("mcountdown stop, id: \n", id)
 			close(cancel)
 			break Outerloop
 		}
@@ -275,25 +179,14 @@ func rcountdown(c *Coordinator, id string) {
 	w := c.workerStatus.workers[id]
 	t := w.t
 	cancel := *w.ch
-	// log.Printf("id %v rcountdown start, cancel channel length %v", id, len(cancel))
-	if t.Stop() {
-		// log.Printf("id %v stop timer\n", id)
-		// cancel <- 0 // 停止上一个任务
-	}
-
+	t.Stop()
 	t.Reset(TIMEOUT)
 Outerloop:
 	for {
 		select {
 		case <-t.C:
-			// log.Printf("rcountdown timeout, id %s", id)
-			// log.Println("++++++")
-			// log.Println(c.reduceTasks)
-			// log.Println("------")
 			// 超时处理
-			fmt.Println("rcountdown 尝试获取锁...")
 			c.mu.Lock()
-			fmt.Println("rcountdown 成功拿到锁...")
 			// 检查是否还在mapping中，找到任务指针
 			targ, ok := c.reduceTasks.mapping[id]
 			if !ok {
@@ -304,35 +197,28 @@ Outerloop:
 			// 检查是否还在running中，是的话重试次数+1移到retry，超过最大重试次数不再重试
 			for idx, ta := range c.reduceTasks.running {
 				if ta == targ {
-					log.Printf("reduce task worker id %v timeout", id)
+					log.Printf("reduce task worker id %v timeout\n", id)
 					// printTasks(c)
 					l := len(c.reduceTasks.running)
 					c.reduceTasks.running[idx] = c.reduceTasks.running[l-1]
 					c.reduceTasks.running = c.reduceTasks.running[:l-1]
 					ta.retryCnt++
-					if ta.retryCnt < 100 { // 重试10次，然后不再重试
+					if ta.retryCnt < 100 { // 重试100次，然后不再重试
 						c.reduceTasks.retrying = append(c.reduceTasks.retrying, targ)
 					} else {
 						c.reduceTasks.failed = append(c.reduceTasks.failed, targ)
 						log.Printf("reduce for hashid %v failed after 100 retries\n", targ.taskid)
 					}
-					log.Printf("reduce remove timeout task finished")
-					// printTasks(c)
 				}
 			}
 			// 关闭管道
-			// log.Printf("beggining to close channel")
 			if w.ch != nil {
 				w.ch = nil
 				cancel <- 0
-				// log.Println("rcountdown timeout, clear channel, id: \n", id)
 			}
-			log.Println("rcountdown 解锁...")
 			c.mu.Unlock()
-			log.Println("rcountdown 解锁done...")
 		// 停止channel
 		case <-cancel:
-			// log.Println("rcountdown stop, id: \n", id)
 			close(cancel)
 			break Outerloop
 		}
@@ -354,44 +240,23 @@ func createNewChannel(c *Coordinator, id string) {
 // 服务函数，获取一个任务
 func (c *Coordinator) GetTask(args *GetTaskArgs, reply *GetTaskReply) error {
 	// 派发任务
-	log.Println("gettask 尝试获取锁...")
 	c.mu.Lock()
-	log.Println("gettask 成功拿到锁...")
-	defer func() {
-		log.Println("gettask 解锁...")
-		c.mu.Unlock()
-		log.Println("gettask 解锁done...")
-	}()
+	defer c.mu.Unlock()
 
 	clientid := args.Token
 
 	if c.reduceTasks.taskCnt == 0 {
-		// 移动最终文件到当前目录
-		// exePath, _ := os.Executable()
-		// exePath := "/Users/risona/Desktop/DistributedSystem/labs/6.5840/src/main"
-		// exePath, _ := os.Getwd()
-		// for _, srcf := range c.reduceTasks.finalfiles {
-		// 	srcfname := filepath.Base(srcf)
-		// 	dstf := filepath.Join(exePath, srcfname)
-		// 	err := os.Rename(srcf, dstf)
-		// 	if err != nil {
-		// 		// log.Printf("move file %v to exec dir failed, %v.", srcf, err)
-		// 	}
-		// }
-
 		reply.IsQuit = true
-		// delete(c.workerStatus.workers, clientid)
 		return nil
 	}
 
 	_, ok := c.workerStatus.workers[clientid]
 	if !ok {
-		// newToken, err := genToken()
-		newToken := strconv.Itoa(c.workerStatus.nextDirNo)
-		// if err != nil {
-		// 	// log.Println("gen token failed ", err)
-		// 	return nil
-		// }
+		newToken, err := genToken()
+		if err != nil {
+			log.Println("gen token failed\n", err)
+			return nil
+		}
 		reply.Token = newToken
 		clientid = newToken
 		// 更新client结构体
@@ -402,19 +267,16 @@ func (c *Coordinator) GetTask(args *GetTaskArgs, reply *GetTaskReply) error {
 		c.workerStatus.nextDirNo++
 		w.t = time.NewTimer(time.Hour) // 防止立即触发
 		w.t.Stop()
-		// w.ch = make(chan int)
 		c.workerStatus.workers[newToken] = &w
 	}
 
-	if c.mapTasks.taskCnt != 0 { // 顺序 retry -> waiting -> running
+	if c.mapTasks.taskCnt != 0 {
 		var mt *maptask
 		mt = getMapTask(c)
 		if mt == nil {
-			// log.Println("get map task failed, no tasks left but tried to get one")
 			return nil
 		}
 		c.mapTasks.mapping[clientid] = mt
-		log.Printf("get map task, worker id %v, srcfile %v", clientid, mt.filepath)
 		reply.Type = MAPTASK
 		reply.Dstdir = filepath.Join(MediateFileDir, strconv.Itoa(c.workerStatus.workers[clientid].dirno))
 		reply.Filepath = mt.filepath
@@ -425,17 +287,15 @@ func (c *Coordinator) GetTask(args *GetTaskArgs, reply *GetTaskReply) error {
 		var rt *reducetask
 		rt = getReduceTask(c)
 		if rt == nil {
-			// log.Println("get reduce task failed, no tasks left but tried to get one")
 			return nil
 		}
 		c.reduceTasks.mapping[clientid] = rt
-		log.Printf("get reduce task, worker id %v, reduceid %v", clientid, rt.taskid)
 		reply.Dstdir = filepath.Join(FinalFileDir, strconv.Itoa(c.workerStatus.workers[clientid].dirno)) // 先也存到中间文件夹，report done中拷贝到最终文件夹
 		reply.Type = REDUCETASK
 		reply.MediateFiles = c.reduceTasks.mediatefiles
 		reply.Reduceid = rt.taskid
 		reply.NReduce = c.reduceTasks.nReduce
-		createNewChannel(c, clientid) // 优化：建议放到report done中
+		createNewChannel(c, clientid) // 优化：建议放到report done中 // 需要吗？？
 		go rcountdown(c, clientid)
 	}
 
@@ -444,14 +304,8 @@ func (c *Coordinator) GetTask(args *GetTaskArgs, reply *GetTaskReply) error {
 
 // 服务函数，通知任务完成
 func (c *Coordinator) ReportTaskDone(args *ReportTaskArgs, reply *int) error {
-	log.Println("reporttask 尝试获取锁...")
 	c.mu.Lock()
-	defer func() {
-		log.Println("reporttask 解锁...")
-		c.mu.Unlock()
-		log.Println("reporttask 解锁done...")
-	}()
-	log.Println("reporttask 成功拿到锁...")
+	defer c.mu.Unlock()
 
 	id := args.Token
 	_, ok := c.workerStatus.workers[id]
@@ -459,10 +313,10 @@ func (c *Coordinator) ReportTaskDone(args *ReportTaskArgs, reply *int) error {
 		log.Printf("get worker id failed %v", id)
 		return nil
 	}
+
 	if args.Type == MAPTASK {
 		targ, ok := c.mapTasks.mapping[id]
 		if !ok {
-			log.Printf("map task mapping get worker %v failed", id)
 			return nil
 		}
 		delete(c.mapTasks.mapping, id)
@@ -475,9 +329,6 @@ func (c *Coordinator) ReportTaskDone(args *ReportTaskArgs, reply *int) error {
 				c.mapTasks.done = append(c.mapTasks.done, targ)
 				// 任务计数-1
 				c.mapTasks.taskCnt--
-				if c.mapTasks.taskCnt == 0 {
-					log.Printf("map task done, begin reduce task")
-				}
 				// 填写中间文件位置
 				targ.outfilename = args.Outfile
 				// 把中间文件放到reduce列表中
@@ -487,7 +338,6 @@ func (c *Coordinator) ReportTaskDone(args *ReportTaskArgs, reply *int) error {
 	} else if args.Type == REDUCETASK {
 		targ, ok := c.reduceTasks.mapping[id]
 		if !ok {
-			log.Printf("reduce task mapping get worker %v failed", id)
 			return nil
 		}
 		delete(c.reduceTasks.mapping, id)
@@ -506,15 +356,13 @@ func (c *Coordinator) ReportTaskDone(args *ReportTaskArgs, reply *int) error {
 				if c.reduceTasks.taskCnt == 0 {
 					if c.reduceTasks.taskCnt == 0 {
 						// 移动最终文件到当前目录
-						// exePath, _ := os.Executable()
-						// exePath := "/Users/risona/Desktop/DistributedSystem/labs/6.5840/src/main"
 						exePath, _ := os.Getwd()
 						for _, srcf := range c.reduceTasks.finalfiles {
 							srcfname := filepath.Base(srcf)
 							dstf := filepath.Join(exePath, srcfname)
 							err := os.Rename(srcf, dstf)
-							if err != nil {
-								// log.Printf("move file %v to exec dir failed, %v.", srcf, err)
+							if err != nil { // 圈复杂度...
+								log.Printf("move file %v to exec dir failed, %v.", srcf, err)
 							}
 						}
 
@@ -571,9 +419,6 @@ func (c *Coordinator) Done() bool {
 // main/mrcoordinator.go calls this function.
 // nReduce is the number of reduce tasks to use.
 func MakeCoordinator(files []string, nReduce int) *Coordinator {
-	// go func() {
-	// 	log.Fatal(http.ListenAndServe("localhost:6060", nil))
-	// }()
 	c := Coordinator{}
 	c.mapTasks.mapping = make(map[string]*maptask)
 	c.reduceTasks.mapping = make(map[string]*reducetask)
@@ -588,7 +433,7 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 	}
 	err = os.MkdirAll(MediateFileDir, 0766)
 	if err != nil {
-		// log.Println("create dir error ", err)
+		log.Printf("create dir %v error, %v", MediateFileDir, err)
 	}
 	// 最终文件目录
 	err = os.RemoveAll(FinalFileDir)
@@ -597,7 +442,7 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 	}
 	err = os.MkdirAll(FinalFileDir, 0766)
 	if err != nil {
-		// log.Println("create dir error ", err)
+		log.Printf("create dir %v error, %v", FinalFileDir, err)
 	}
 
 	// initialize map reduce tasks
