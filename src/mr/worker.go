@@ -54,7 +54,6 @@ func Worker(mapf func(string, string) []KeyValue,
 		if id != reply.Token {
 			id = reply.Token
 		}
-		log.Printf("worker %v get task done", id)
 		tasktype := reply.Type
 		if tasktype == TASKBEGIN {
 			time.Sleep(1 * time.Second)
@@ -202,7 +201,6 @@ func getJob(args *GetTaskArgs, reply *GetTaskReply) {
 
 func reportDone(args *ReportTaskArgs, reply *int) {
 	// log.Printf("reduceid %d call report done", *reply)
-	log.Printf("worker %v report work", args.Token)
 	ok := call("Coordinator.ReportTaskDone", args, nil)
 	if ok {
 		// reply.Y should be 100.

@@ -147,7 +147,7 @@ Outerloop:
 			// 检查是否还在running中，是的话重试次数+1移到retry，超过最大重试次数不再重试
 			for idx, ta := range c.mapTasks.running {
 				if ta == targ {
-					log.Printf("map task worker id %v timeout\n", id)
+					// log.Printf("map task worker id %v timeout\n", id)
 					l := len(c.mapTasks.running)
 					c.mapTasks.running[idx] = c.mapTasks.running[l-1]
 					c.mapTasks.running = c.mapTasks.running[:l-1]
@@ -197,7 +197,7 @@ Outerloop:
 			// 检查是否还在running中，是的话重试次数+1移到retry，超过最大重试次数不再重试
 			for idx, ta := range c.reduceTasks.running {
 				if ta == targ {
-					log.Printf("reduce task worker id %v timeout\n", id)
+					// log.Printf("reduce task worker id %v timeout\n", id)
 					// printTasks(c)
 					l := len(c.reduceTasks.running)
 					c.reduceTasks.running[idx] = c.reduceTasks.running[l-1]
@@ -402,11 +402,9 @@ func (c *Coordinator) Done() bool {
 
 	if !quitting {
 		go func() {
-			log.Printf("preparing to quit, waiting for workers to end %v\n", time.Now())
 			quitting = true
 			t := time.NewTimer(10 * time.Second)
 			<-t.C
-			log.Printf("quit at %v\n", time.Now())
 			canquit = true
 		}()
 	}
