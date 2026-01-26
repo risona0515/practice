@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 )
 
 // Map functions return a slice of KeyValue.
@@ -60,21 +61,28 @@ func Worker(mapf func(string, string) []KeyValue,
 		if id != reply.Token {
 			id = reply.Token
 		}
+		log.Printf("worker %v get task done", id)
+		tasktype := reply.Type
+		if tasktype == TASKBEGIN {
+			// log.Println("no task, sleep 10 s")
+			time.Sleep(1 * time.Second)
+			continue
+		}
 
 		// 检查目录是否存在，不存在则创建
 		dstdir := reply.Dstdir
 		os.MkdirAll(dstdir, os.ModePerm)
 		// info, err := os.Stat(dstdir)
 		// if err != nil {
-		// 	// log.Println(err)
+		// 	log.Println(err)
 		// 	return false
 		// }
 		// if !info.IsDir() {
-		// 	// log.Printf("destination %v not a folder\n", dstdir)
+		// 	log.Printf("destination %v not a folder\n", dstdir)
 		// }
 
-		tasktype := reply.Type
 		var midfile string
+		log.Printf("worker %v begin task, type%v, inputpath %v, reduceid %v", id, reply.Type, reply.Filepath, reply.Reduceid)
 		if tasktype == MAPTASK {
 			retok := procMapWork(&reply, mapf, &midfile)
 			if !retok {
@@ -86,10 +94,11 @@ func Worker(mapf func(string, string) []KeyValue,
 				reply.Token = ""
 			}
 		}
+		log.Printf("worker %v end task, type %v, outfile %v", id, tasktype, midfile)
 		reportargs := ReportTaskArgs{Type: tasktype, Token: id, Outfile: midfile}
 		reportDone(&reportargs, &reply.Reduceid)
 	}
-	// log.Printf("worker inner exit %v\n", id)
+	log.Printf("worker inner exit %v\n", id)
 }
 
 // 返回值，成功 true，失败 false
@@ -101,12 +110,12 @@ func procMapWork(reply *GetTaskReply, mapf func(string, string) []KeyValue, outf
 	intermediate := []KeyValue{}
 	f, err := os.Open(fpath)
 	if err != nil {
-		// log.Println("cannot open", fpath)
+		log.Println("cannot open", fpath)
 		log.Println(err)
 	}
 	content, err := io.ReadAll(f)
 	if err != nil {
-		// log.Println("cannot read", fpath)
+		log.Println("cannot read", fpath)
 		log.Println(err)
 	}
 	f.Close()
@@ -122,6 +131,7 @@ func procMapWork(reply *GetTaskReply, mapf func(string, string) []KeyValue, outf
 	outpath := filepath.Join(dstdir, fnameNoExt+".json")
 	f, err = os.Create(outpath)
 	if err != nil { // 这里检查过了，前面是否可以不用检查目录是否创建？
+		log.Printf("map worker %v create midfile failed, src %v, dst %v", reply.Token, fpath, outpath)
 		log.Println(err)
 		return false
 	}
@@ -149,7 +159,7 @@ func procReduceWork(reply *GetTaskReply, reducef func(string, []string) string, 
 	reduceid := reply.Reduceid
 	nreduce := reply.NReduce
 
-	// // log.Printf("proc reduce start, retry2 retry3 retry5", retry2, retry3, retry5, nreduce)
+	// log.Printf("proc reduce start, retry2 retry3 retry5", retry2, retry3, retry5, nreduce)
 	// if reduceid == 2 && retry2 {
 	// 	time.Sleep(12 * time.Second)
 	// 	retry2 = false
@@ -162,13 +172,14 @@ func procReduceWork(reply *GetTaskReply, reducef func(string, []string) string, 
 	// 	time.Sleep(15 * time.Second)
 	// 	retry5 = false
 	// }
-	// log.Printf("reduce id %v continue to work", reduceid)
+	log.Printf("reduce id %v continue to work", reduceid)
 
 	// 先创建输出文件
 	oname := fmt.Sprintf("mr-out-%d", reduceid)
 	outpath := filepath.Join(dstdir, oname)
 	ofile, err := os.Create(outpath)
 	if err != nil {
+		log.Printf("reduce worker %v create midfile failed, nreduce id %v, dst %v", reply.Token, nreduce, outpath)
 		log.Println(err)
 		return false
 	}
@@ -217,7 +228,7 @@ func procReduceWork(reply *GetTaskReply, reducef func(string, []string) string, 
 		output := reducef(k, v)
 		fmt.Fprintf(ofile, "%v %v\n", k, output)
 	}
-	// log.Printf("reduce id %v work done", reduceid)
+	log.Printf("reduce id %v work done", reduceid)
 	return true
 }
 
@@ -226,23 +237,25 @@ func getJob(args *GetTaskArgs, reply *GetTaskReply) {
 	// the "Coordinator.Example" tells the
 	// receiving server that we'd like to call
 	// the Example() method of struct Coordinator.
+	log.Printf("worker %v get work", args.Token)
 	ok := call("Coordinator.GetTask", args, reply)
 	if ok {
 		// reply.Y should be 100.
-		// log.Printf("worker %v processing %v %v\n", reply.Token, reply.Filepath, reply.Reduceid)
+		log.Printf("worker %v processing %v %v\n", reply.Token, reply.Filepath, reply.Reduceid)
 	} else {
-		// log.Printf("%v get work failed!\n", reply.Token)
+		log.Printf("worker %v get work failed!\n", reply.Token)
 	}
 }
 
 func reportDone(args *ReportTaskArgs, reply *int) {
 	// log.Printf("reduceid %d call report done", *reply)
+	log.Printf("worker %v report work", args.Token)
 	ok := call("Coordinator.ReportTaskDone", args, nil)
 	if ok {
 		// reply.Y should be 100.
-		// log.Printf("worker %v report done\n", args.Token)
+		log.Printf("worker %v report done\n", args.Token)
 	} else {
-		// log.Printf("%v report done failed!\n", args.Token)
+		log.Printf("worker %v report done failed!\n", args.Token)
 	}
 }
 
@@ -269,9 +282,9 @@ func reportDone(args *ReportTaskArgs, reply *int) {
 // 	ok := call("Coordinator.Example", &args, &reply)
 // 	if ok {
 // 		// reply.Y should be 100.
-// 		// log.Printlnf("reply.Y %v\n", reply.Y)
+// 		log.Printlnf("reply.Y %v\n", reply.Y)
 // 	} else {
-// 		// log.Printlnf("call failed!\n")
+// 		log.Printlnf("call failed!\n")
 // 	}
 // }
 
