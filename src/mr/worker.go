@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -64,13 +65,15 @@ func Worker(mapf func(string, string) []KeyValue,
 		dstdir := reply.Dstdir
 		os.MkdirAll(dstdir, os.ModePerm)
 
-		var midfile string
+		var midfile []string
 		if tasktype == MAPTASK {
-			retok := procMapWork(&reply, mapf, &midfile)
+			midfile = make([]string, reply.NReduce)
+			retok := procMapWork(&reply, mapf, &midfile, reply.NReduce)
 			if !retok {
 				reply.Token = "" // 失败场景暂时用无token来表示
 			}
 		} else if tasktype == REDUCETASK {
+			midfile = make([]string, 1) // reduce只需要填一个文件
 			retok := procReduceWork(&reply, reducef, &midfile)
 			if !retok {
 				reply.Token = ""
@@ -82,12 +85,12 @@ func Worker(mapf func(string, string) []KeyValue,
 }
 
 // 返回值，成功 true，失败 false
-func procMapWork(reply *GetTaskReply, mapf func(string, string) []KeyValue, outfile *string) bool {
+func procMapWork(reply *GetTaskReply, mapf func(string, string) []KeyValue, outfile *[]string, arraysize int) bool {
 	dstdir := reply.Dstdir
 	fpath := reply.Filepath
 
 	// 调用map函数做统计
-	intermediate := []KeyValue{}
+	intermediate := make([][]KeyValue, arraysize)
 	f, err := os.Open(fpath)
 	if err != nil {
 		log.Println("cannot open", fpath)
@@ -100,33 +103,48 @@ func procMapWork(reply *GetTaskReply, mapf func(string, string) []KeyValue, outf
 	}
 	f.Close()
 	kva := mapf(fpath, string(content))
-	intermediate = append(intermediate, kva...)
+	for _, kvpair := range kva {
+		rid := ihash(kvpair.Key) % arraysize
+		intermediate[rid] = append(intermediate[rid], kvpair)
+	}
+	// intermediate = append(intermediate, kva...)
 
 	// 拼接写入的中间文件路径
 	fname := filepath.Base(fpath)
 	ext := filepath.Ext(fname)
 	fnameNoExt := strings.TrimSuffix(fname, ext)
+	// 根据哈希%n创建文件
+	for idx := 0; idx < arraysize; idx++ {
+		outpath := filepath.Join(dstdir, fnameNoExt+"_"+strconv.Itoa(idx)+".json")
+		f, err = os.Create(outpath)
+		if err != nil { // 这里检查过了，前面是否可以不用检查目录是否创建？
+			log.Printf("map worker %v create midfile failed, src %v, dst %v", reply.Token, fpath, outpath)
+			log.Println(err)
+			return false
+		}
+		// 写入map
+		encoder := json.NewEncoder(f)
+		encoder.Encode(intermediate[idx])
+		f.Close()
+		(*outfile)[idx] = outpath
+	}
 
 	// 创建写入的中间文件路径
-	outpath := filepath.Join(dstdir, fnameNoExt+".json")
-	f, err = os.Create(outpath)
-	if err != nil { // 这里检查过了，前面是否可以不用检查目录是否创建？
-		log.Printf("map worker %v create midfile failed, src %v, dst %v", reply.Token, fpath, outpath)
-		log.Println(err)
-		return false
-	}
-	defer f.Close()
-	*outfile = outpath
-
-	// 写入map
-	encoder := json.NewEncoder(f)
-	encoder.Encode(intermediate)
+	// outpath := filepath.Join(dstdir, fnameNoExt+".json")
+	// f, err = os.Create(outpath)
+	// if err != nil { // 这里检查过了，前面是否可以不用检查目录是否创建？
+	// 	log.Printf("map worker %v create midfile failed, src %v, dst %v", reply.Token, fpath, outpath)
+	// 	log.Println(err)
+	// 	return false
+	// }
+	// defer f.Close()
+	// *outfile = outpath
 
 	return true
 }
 
 // 返回值，成功 true，失败 false
-func procReduceWork(reply *GetTaskReply, reducef func(string, []string) string, outfile *string) bool {
+func procReduceWork(reply *GetTaskReply, reducef func(string, []string) string, outfile *[]string) bool {
 	dstdir := reply.Dstdir
 	files := reply.MediateFiles
 	reduceid := reply.Reduceid
@@ -142,7 +160,7 @@ func procReduceWork(reply *GetTaskReply, reducef func(string, []string) string, 
 		return false
 	}
 	defer ofile.Close()
-	*outfile = outpath
+	(*outfile)[0] = outpath
 
 	gather := map[string][]string{}
 
@@ -170,10 +188,8 @@ func procReduceWork(reply *GetTaskReply, reducef func(string, []string) string, 
 			for j < len(intermediate) && intermediate[j].Key == intermediate[i].Key {
 				j++
 			}
-			if ihash(intermediate[i].Key)%nreduce == reduceid {
-				for k := i; k < j; k++ {
-					gather[intermediate[i].Key] = append(gather[intermediate[i].Key], intermediate[k].Value)
-				}
+			for k := i; k < j; k++ {
+				gather[intermediate[i].Key] = append(gather[intermediate[i].Key], intermediate[k].Value)
 			}
 			i = j
 		}

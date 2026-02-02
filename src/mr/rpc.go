@@ -48,18 +48,18 @@ type GetTaskReply struct {
 	// Filedir  string
 	// Filename string
 	Filepath string
+	NReduce  int
 
 	//Reduce
 	MediateFiles []string
 	Reduceid     int
-	NReduce      int
 }
 
 type ReportTaskArgs struct {
 	Type  TaskType
 	Token string
 	// Outdir  string
-	Outfile string
+	Outfile []string
 	// Outpath string
 }
 

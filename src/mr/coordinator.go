@@ -17,9 +17,9 @@ import (
 
 // Map任务结构体
 type maptask struct {
-	filepath    string
-	outfilename string
-	retryCnt    int
+	filepath string
+	// outfilename string
+	retryCnt int
 }
 type mapStruct struct {
 	taskCnt                                  int
@@ -30,12 +30,13 @@ type mapStruct struct {
 // Reduce任务结构体
 type reducetask struct {
 	taskid   int
+	midfiles []string
 	retryCnt int
 }
 type reduceStruct struct {
-	taskCnt                                  int
-	nReduce                                  int
-	mediatefiles                             []string
+	taskCnt int
+	nReduce int
+	// mediatefiles                             []string
 	finalfiles                               []string
 	waiting, running, retrying, done, failed []*reducetask
 	mapping                                  map[string]*reducetask
@@ -280,6 +281,7 @@ func (c *Coordinator) GetTask(args *GetTaskArgs, reply *GetTaskReply) error {
 		reply.Type = MAPTASK
 		reply.Dstdir = filepath.Join(MediateFileDir, strconv.Itoa(c.workerStatus.workers[clientid].dirno))
 		reply.Filepath = mt.filepath
+		reply.NReduce = c.reduceTasks.nReduce
 		createNewChannel(c, clientid)
 		go mcountdown(c, clientid)
 	} else if c.reduceTasks.taskCnt != 0 {
@@ -292,7 +294,7 @@ func (c *Coordinator) GetTask(args *GetTaskArgs, reply *GetTaskReply) error {
 		c.reduceTasks.mapping[clientid] = rt
 		reply.Dstdir = filepath.Join(FinalFileDir, strconv.Itoa(c.workerStatus.workers[clientid].dirno)) // 先也存到中间文件夹，report done中拷贝到最终文件夹
 		reply.Type = REDUCETASK
-		reply.MediateFiles = c.reduceTasks.mediatefiles
+		reply.MediateFiles = rt.midfiles
 		reply.Reduceid = rt.taskid
 		reply.NReduce = c.reduceTasks.nReduce
 		createNewChannel(c, clientid) // 优化：建议放到report done中 // 需要吗？？
@@ -330,9 +332,12 @@ func (c *Coordinator) ReportTaskDone(args *ReportTaskArgs, reply *int) error {
 				// 任务计数-1
 				c.mapTasks.taskCnt--
 				// 填写中间文件位置
-				targ.outfilename = args.Outfile
+				// targ.outfilename = args.Outfile
 				// 把中间文件放到reduce列表中
-				c.reduceTasks.mediatefiles = append(c.reduceTasks.mediatefiles, args.Outfile)
+				for _, rtaskptr := range c.reduceTasks.waiting {
+					rtaskptr.midfiles = append(rtaskptr.midfiles, args.Outfile[rtaskptr.taskid])
+				}
+				// c.reduceTasks.mediatefiles = append(c.reduceTasks.mediatefiles, args.Outfile)
 			}
 		}
 	} else if args.Type == REDUCETASK {
@@ -351,24 +356,22 @@ func (c *Coordinator) ReportTaskDone(args *ReportTaskArgs, reply *int) error {
 				// 任务计数-1
 				c.reduceTasks.taskCnt--
 				// 记录最终文件
-				c.reduceTasks.finalfiles = append(c.reduceTasks.finalfiles, args.Outfile)
+				c.reduceTasks.finalfiles = append(c.reduceTasks.finalfiles, args.Outfile[0])
 
 				if c.reduceTasks.taskCnt == 0 {
-					if c.reduceTasks.taskCnt == 0 {
-						// 移动最终文件到当前目录
-						exePath, _ := os.Getwd()
-						for _, srcf := range c.reduceTasks.finalfiles {
-							srcfname := filepath.Base(srcf)
-							dstf := filepath.Join(exePath, srcfname)
-							err := os.Rename(srcf, dstf)
-							if err != nil { // 圈复杂度...
-								log.Printf("move file %v to exec dir failed, %v.", srcf, err)
-							}
+					// 移动最终文件到当前目录
+					exePath, _ := os.Getwd()
+					for _, srcf := range c.reduceTasks.finalfiles {
+						srcfname := filepath.Base(srcf)
+						dstf := filepath.Join(exePath, srcfname)
+						err := os.Rename(srcf, dstf)
+						if err != nil { // 圈复杂度...
+							log.Printf("move file %v to exec dir failed, %v.", srcf, err)
 						}
-
-						delete(c.workerStatus.workers, id)
-						return nil
 					}
+
+					delete(c.workerStatus.workers, id)
+					return nil
 				}
 			}
 		}
