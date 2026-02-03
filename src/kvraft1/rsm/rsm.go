@@ -11,9 +11,6 @@ import (
 
 )
 
-var useRaftStateMachine bool // to plug in another raft besided raft1
-
-
 type Op struct {
 	// Your definitions here.
 	// Field names must start with capital letters,
@@ -65,7 +62,7 @@ func MakeRSM(servers []*labrpc.ClientEnd, me int, persister *tester.Persister, m
 		applyCh:      make(chan raftapi.ApplyMsg),
 		sm:           sm,
 	}
-	if !useRaftStateMachine {
+	if !tester.UseRaftStateMachine {
 		rsm.rf = raft.Make(servers, me, persister, rsm.applyCh)
 	}
 	return rsm

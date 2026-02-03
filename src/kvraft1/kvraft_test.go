@@ -2,12 +2,11 @@ package kvraft
 
 import (
 	"fmt"
-	//"log"
+	"log"
 	"strconv"
 	"testing"
 	"time"
 
-	"6.5840/kvraft1/rsm"
 	"6.5840/kvsrv1/rpc"
 	"6.5840/kvtest1"
 	tester "6.5840/tester1"
@@ -30,11 +29,9 @@ const (
 func (ts *Test) GenericTest() {
 	const (
 		NITER = 3
-		NSEC  = 1
-		T     = NSEC * time.Second
+		NSEC  = 1 * time.Second
 		NKEYS = 100
 	)
-	// const T = 1 * time.Millisecond
 	defer ts.Cleanup()
 
 	ch_partitioner := make(chan bool)
@@ -46,10 +43,9 @@ func (ts *Test) GenericTest() {
 		default_key = kvtest.MakeKeys(NKEYS)
 	}
 	for i := 0; i < NITER; i++ {
-		// log.Printf("Iteration %v\n", i)
 
 		go func() {
-			rs := ts.SpawnClientsAndWait(ts.nclients, T, func(cli int, ck kvtest.IKVClerk, done chan struct{}) kvtest.ClntRes {
+			rs := ts.SpawnClientsAndWait(ts.nclients, NSEC, func(cli int, ck kvtest.IKVClerk, done chan struct{}) kvtest.ClntRes {
 				return ts.OneClientPut(cli, ck, default_key, done)
 			})
 			if !ts.randomkeys {
@@ -88,27 +84,21 @@ func (ts *Test) GenericTest() {
 		}
 
 		if ts.crash {
-			// log.Printf("shutdown servers\n")
-			for i := 0; i < ts.nservers; i++ {
-				ts.Group(Gid).ShutdownServer(i)
-			}
-			tester.AnnotateShutdownAll()
+			//log.Printf("shutdown servers\n")
+			ts.killall()
 			// Wait for a while for servers to shutdown, since
 			// shutdown isn't a real crash and isn't instantaneous
 			time.Sleep(kvtest.ElectionTimeout)
 			// log.Printf("restart servers\n")
 			// crash and re-start all
-			for i := 0; i < ts.nservers; i++ {
-				ts.Group(Gid).StartServer(i)
-			}
-			ts.Group(Gid).ConnectAll()
+			ts.restartall()
 			tester.AnnotateClearFailure()
 		}
 
 		if ts.maxraftstate > 0 {
 			// Check maximum after the servers have processed all client
 			// requests and had time to checkpoint.
-			sz := ts.Config.Group(Gid).LogSize()
+			sz := ts.Config.Group(Gid).RaftSize()
 			if sz > 8*ts.maxraftstate {
 				err := fmt.Sprintf("logs were not trimmed (%v > 8*%v)", sz, ts.maxraftstate)
 				tester.AnnotateCheckerFailure(err, err)
@@ -130,6 +120,7 @@ func (ts *Test) GenericTest() {
 // check that ops are committed fast enough, better than 1 per heartbeat interval
 func (ts *Test) GenericTestSpeed() {
 	const numOps = 1000
+	bins := make([]int, 100)
 
 	defer ts.Cleanup()
 
@@ -141,9 +132,13 @@ func (ts *Test) GenericTestSpeed() {
 
 	start := time.Now()
 	for i := 0; i < numOps; i++ {
+		s := time.Now()
 		if err := ck.Put("k", strconv.Itoa(i), rpc.Tversion(i)); err != rpc.OK {
 			ts.t.Fatalf("Put err %v", err)
 		}
+		d := time.Since(s) / (5 * time.Millisecond)
+		bins[d] += 1
+
 	}
 	dur := time.Since(start)
 
@@ -153,10 +148,16 @@ func (ts *Test) GenericTestSpeed() {
 		ts.t.Fatalf("Get too few ops %v", ver)
 	}
 
-	// heartbeat interval should be ~ 100 ms; require at least 3 ops per
+	// heartbeat interval should be ~ 100 ms; require at least 3 ops per interval
 	const heartbeatInterval = 100 * time.Millisecond
 	const opsPerInterval = 3
 	const timePerOp = heartbeatInterval / opsPerInterval
+	log.Printf("dur %v %v", dur/numOps, timePerOp)
+	for i, n := range bins {
+		if n > 0 {
+			log.Printf("%d: %d\n", i, n)
+		}
+	}
 	if dur > numOps*timePerOp {
 		ts.t.Fatalf("Operations completed too slowly %v/op > %v/op\n", dur/numOps, timePerOp)
 	}
@@ -198,15 +199,10 @@ func TestOnePartition4B(t *testing.T) {
 	ck := ts.MakeClerk()
 
 	ver0 := ts.PutAtLeastOnce(ck, "1", "13", rpc.Tversion(0), -1)
-
-	foundl, l := rsm.Leader(ts.Config, Gid)
-	if foundl {
-		text := fmt.Sprintf("leader found = %v", l)
-		tester.AnnotateInfo(text, text)
-	} else {
-		text := "did not find a leader"
-		tester.AnnotateInfo(text, text)
-	}
+	ck0 := ck.(*kvtest.TestClerk).IKVClerk.(*Clerk)
+	l := ck0.Leader()
+	text := fmt.Sprintf("leader found = %v", l)
+	tester.AnnotateInfo(text, text)
 	p1, p2 := ts.Group(Gid).MakePartition(l)
 	ts.Group(Gid).Partition(p1, p2)
 	tester.AnnotateTwoPartitions(p1, p2)
@@ -371,14 +367,14 @@ func TestSnapshotRPC4C(t *testing.T) {
 
 	// check that the majority partition has thrown away
 	// most of its log entries.
-	sz := ts.Group(Gid).LogSize()
+	sz := ts.Group(Gid).RaftSize()
 	if sz > 8*ts.maxraftstate {
 		err := fmt.Sprintf("logs were not trimmed (%v > 8*%v)", sz, ts.maxraftstate)
 		tester.AnnotateCheckerFailure(err, err)
 		t.Fatalf(err)
 	}
 
-	// now make group that requires participation of
+	// now make a group that requires participation of
 	// lagging server, so that it has to catch up.
 	verc := rpc.Tversion(0)
 	ts.Group(Gid).Partition([]int{0, 2}, []int{1})
@@ -423,7 +419,7 @@ func TestSnapshotSize4C(t *testing.T) {
 	}
 
 	// check that servers have thrown away most of their log entries
-	sz := ts.Group(Gid).LogSize()
+	sz := ts.Group(Gid).RaftSize()
 	if sz > 8*ts.maxraftstate {
 		err := fmt.Sprintf("logs were not trimmed (%v > 8*%v)", sz, ts.maxraftstate)
 		tester.AnnotateCheckerFailure(err, err)

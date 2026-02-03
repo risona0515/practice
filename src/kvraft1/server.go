@@ -1,8 +1,6 @@
 package kvraft
 
 import (
-	"sync/atomic"
-
 	"6.5840/kvraft1/rsm"
 	"6.5840/kvsrv1/rpc"
 	"6.5840/labgob"
@@ -12,9 +10,8 @@ import (
 )
 
 type KVServer struct {
-	me   int
-	dead int32 // set by Kill()
-	rsm  *rsm.RSM
+	me  int
+	rsm *rsm.RSM
 
 	// Your definitions here.
 }
@@ -50,27 +47,9 @@ func (kv *KVServer) Put(args *rpc.PutArgs, reply *rpc.PutReply) {
 	// of Submit() into a PutReply: rep.(rpc.PutReply)
 }
 
-// the tester calls Kill() when a KVServer instance won't
-// be needed again. for your convenience, we supply
-// code to set rf.dead (without needing a lock),
-// and a killed() method to test rf.dead in
-// long-running loops. you can also add your own
-// code to Kill(). you're not required to do anything
-// about this, but it may be convenient (for example)
-// to suppress debug output from a Kill()ed instance.
-func (kv *KVServer) Kill() {
-	atomic.StoreInt32(&kv.dead, 1)
-	// Your code here, if desired.
-}
-
-func (kv *KVServer) killed() bool {
-	z := atomic.LoadInt32(&kv.dead)
-	return z == 1
-}
-
 // StartKVServer() and MakeRSM() must return quickly, so they should
 // start goroutines for any long-running work.
-func StartKVServer(servers []*labrpc.ClientEnd, gid tester.Tgid, me int, persister *tester.Persister, maxraftstate int) []tester.IService {
+func StartKVServer(servers []*labrpc.ClientEnd, gid tester.Tgid, me int, persister *tester.Persister, maxraftstate int) []any {
 	// call labgob.Register on structures you want
 	// Go's RPC library to marshall/unmarshall.
 	labgob.Register(rsm.Op{})
@@ -82,5 +61,9 @@ func StartKVServer(servers []*labrpc.ClientEnd, gid tester.Tgid, me int, persist
 
 	kv.rsm = rsm.MakeRSM(servers, me, persister, maxraftstate, kv)
 	// You may need initialization code here.
-	return []tester.IService{kv, kv.rsm.Raft()}
+	return []any{kv, kv.rsm.Raft()}
+}
+
+func NewServer(tc *tester.TesterClnt, ends []*labrpc.ClientEnd, grp tester.Tgid, srv int, persister *tester.Persister) []any {
+	return StartKVServer(ends, Gid, srv, persister, tester.MaxRaftState)
 }

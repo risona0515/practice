@@ -1,16 +1,17 @@
 package raft
 
-// The file raftapi/raft.go defines the interface that raft must
+// The file ../raftapi/raftapi.go defines the interface that raft must
 // expose to servers (or the tester), but see comments below for each
 // of these functions for more details.
 //
-// Make() creates a new raft peer that implements the raft interface.
+// In addition,  Make() creates a new raft peer that implements the
+// raft interface.
+
 
 import (
 	//	"bytes"
 	"math/rand"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	//	"6.5840/labgob"
@@ -26,7 +27,6 @@ type Raft struct {
 	peers     []*labrpc.ClientEnd // RPC end points of all peers
 	persister *tester.Persister   // Object to hold this peer's persisted state
 	me        int                 // this peer's index into peers[]
-	dead      int32               // set by Kill()
 
 	// Your data here (3A, 3B, 3C).
 	// Look at the paper's Figure 2 for a description of what
@@ -156,8 +156,7 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 // server isn't the leader, returns false. otherwise start the
 // agreement and return immediately. there is no guarantee that this
 // command will ever be committed to the Raft log, since the leader
-// may fail or lose an election. even if the Raft instance has been killed,
-// this function should return gracefully.
+// may fail or lose an election.
 //
 // the first return value is the index that the command will appear at
 // if it's ever committed. the second return value is the current
@@ -174,27 +173,8 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	return index, term, isLeader
 }
 
-// the tester doesn't halt goroutines created by Raft after each test,
-// but it does call the Kill() method. your code can use killed() to
-// check whether Kill() has been called. the use of atomic avoids the
-// need for a lock.
-//
-// the issue is that long-running goroutines use memory and may chew
-// up CPU time, perhaps causing later tests to fail and generating
-// confusing debug output. any goroutine with a long-running loop
-// should call killed() to check whether it should stop.
-func (rf *Raft) Kill() {
-	atomic.StoreInt32(&rf.dead, 1)
-	// Your code here, if desired.
-}
-
-func (rf *Raft) killed() bool {
-	z := atomic.LoadInt32(&rf.dead)
-	return z == 1
-}
-
 func (rf *Raft) ticker() {
-	for rf.killed() == false {
+	for true {
 
 		// Your code here (3A)
 		// Check if a leader election should be started.
